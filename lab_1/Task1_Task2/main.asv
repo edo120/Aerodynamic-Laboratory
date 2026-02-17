@@ -1,0 +1,627 @@
+%% NB. THE CODE IS MADE UP OF TWO PARTS DIVIDED BY THE COMMANDS CLC, CLOSE ALL, CLEAR.
+%% IT IS RECOMMANDED TO RUN THEM SEPARATELY ONE BY ONE USING <RUN SECTION> 
+%% Hess Smith
+
+clc
+close all
+clear 
+
+addpath mat_functions
+
+
+% Input data: 
+
+naca = '0008';           % NACA profile 
+naca_string = sprintf('NACA %s',naca);
+U_inf_asyntotic = 1;     % Far-field velocity [m/s]
+AoA = -3 : 0.5 : 3;        % Angle of attack
+
+Chord = 1;
+NPanels = 200;
+
+LE_X_Position = 0;
+LE_Y_Position = 0;
+
+
+% Initialising coefficients for the cycle
+Cl = zeros(1,length(AoA));
+Cm = zeros(1,length(AoA));
+Cl_thin_foil = zeros(1,length(AoA));
+Cm_thin_foil = zeros(1,length(AoA));
+Cl_percentage = zeros(1,length(AoA));
+Cm_percentage = zeros(1,length(AoA));
+
+
+% Cycle (NB. some actions can be made only once via <if k == 1 .... end>
+for k = 1 : length(AoA)
+
+
+U_inf_x = U_inf_asyntotic * cos(deg2rad(AoA(k)));
+U_inf_y = U_inf_asyntotic * sin(deg2rad(AoA(k)));
+U_inf = [U_inf_x; U_inf_y];
+
+
+
+% create NACA profile with createProfile function (with xfoil) 
+% once per all the cycle
+if k == 1
+[x_initial,y_initial,xfoil_data]=createProfile(naca,NPanels,Chord,AoA);
+end
+
+
+if k == 1
+% plot profile 
+figure
+plot(x_initial,y_initial,'o-');
+grid on 
+axis equal
+xlabel('Normalized length of the airfoil');
+ylabel('Normalized height of the airfoil');
+title('Initial Airfoil',naca_string);
+
+geo.x = x_initial;
+geo.y = y_initial;
+end
+
+
+
+% Create discretization & initialization
+% Once per all the cycle
+if k == 1
+[centers,normals,tangent,extrema_1,extrema_2,alpha,lengths,L2G_TransfMatrix,G2L_TransfMatrix] = CreatePanels(geo);
+end
+
+
+NCols = sum(NPanels) + 1;
+NRows = NCols;
+A = zeros(NRows,NCols);     % system coefficients
+B = zeros(NRows,1);         % known terms
+
+% Fill A
+
+for i = 1:NPanels
+    local_center = centers(i, :)';
+    local_normal = normals(i, :)';
+
+    for j = 1:NPanels
+        local_extreme_1 = extrema_1(j, :)';
+        local_extreme_2 = extrema_2(j, :)';
+
+        local_L2G_TransfMatrix = squeeze(L2G_TransfMatrix(j, :, :));
+        local_G2L_TransfMatrix = squeeze(G2L_TransfMatrix(j, :, :));
+
+        A(i, j) = dot(uSource(local_center, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), local_normal);
+
+        A(i, sum(NPanels)+1) = A(i, sum(NPanels)+1) + dot(uVortex(local_center, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), local_normal);
+    end
+
+end
+
+% Create a_v, c_s, and c_v vectors
+
+first_centers = centers(1, :)';
+first_tangent = tangent(1, :)';
+
+last_centers = centers(end, :)';
+last_tangent = tangent(end, :)';
+
+last_a = 0;
+for j = 1:NPanels
+    local_extreme_1 = extrema_1(j, :)';
+    local_extreme_2 = extrema_2(j, :)';
+    local_L2G_TransfMatrix = squeeze(L2G_TransfMatrix(j, :, :));
+    local_G2L_TransfMatrix = squeeze(G2L_TransfMatrix(j, :, :));
+
+    a = dot(uSource(first_centers, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), first_tangent);
+    last_a = last_a + dot(uVortex(first_centers, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), first_tangent);
+
+    a = a + dot(uSource(last_centers, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), last_tangent);
+    last_a = last_a + dot(uVortex(last_centers, local_extreme_1, local_extreme_2, local_L2G_TransfMatrix, local_G2L_TransfMatrix), last_tangent);
+
+    A(sum(NPanels) + 1, j) = a;
+end
+
+A(sum(NPanels) + 1, sum(NPanels) + 1) = last_a;
+
+% Create B, the known terms in the system 
+
+for j = 1:NPanels
+    local_normal = normals(j, :)';
+    B(j) = - dot(U_inf, local_normal);
+end
+
+first_tangent = tangent(1, :)';
+last_tangent = tangent(end, :)';
+B(sum(NPanels) + 1) = - dot(U_inf, (first_tangent + last_tangent));
+
+% Solve the linear system
+
+solution = linsolve(A,B);
+
+
+
+
+% TASK 1: ----------------------------------------------------------------
+% xfoil
+% Once per all the cycle
+if k == 1
+fprintf('Xfoil:------------------------------------------------------------\n');
+
+% Cl :
+fprintf('Cl of the xfoil airfoil at %.3f° = %.3f\n',AoA(k),xfoil_data.Cl(k));
+
+% Cm :
+fprintf('Cm_LE of the xfoil airfoil at %.3f° = %.3f\n\n',AoA(k),-xfoil_data.Cm(k));
+end
+
+
+% Hess Smith:
+% Once per all the cycle
+if k == 1
+fprintf('Hess Smith:-------------------------------------------------------\n');
+end
+
+% CP Computation 
+CP_vect = CP_fun(U_inf,solution,geo,NPanels);
+% Once per all the cycle
+if k == 1
+figure
+hold on
+grid on 
+plot(centers(:,1),-CP_vect,'g','LineWidth',1.5,'DisplayName','Hess-Smith');
+plot(xfoil_data.data_Cp.alpha(k).x(:,1),-xfoil_data.data_Cp.alpha(k).y(:,1), ...
+    'r','LineWidth',1.5,'DisplayName','Xfoil');
+title('C_p Distribution');                     %,naca_string);
+xlabel('Normalized length of the wing');
+ylabel('-C_p');
+legend('Location','best','FontSize',20);
+set(gca,'FontSize',20);
+end
+
+% if k == 1
+% figure
+% n = floor((NPanels-1)/2);
+% plot(centers(n:end,1),-1*CP_vect(n:end),'LineWidth',1.5);
+% grid on 
+% hold on 
+% plot(centers(1:n,1),-1*CP_vect(1:n),'LineWidth',1.5);
+% title('CP Distribution');
+% xlabel('Normalized length of the wing');
+% ylabel('-CP');
+% legend('Upper side','Lower side');
+% end
+
+
+% CL Computation 
+Cl(k) = Cl_fun(U_inf,geo,CP_vect,NPanels);
+% Once per all the cycle
+if k == 1
+fprintf('Cl of the airfoil at %.3f° = %.3f\n',AoA(k),Cl(k));
+end
+
+
+% CM Computation 
+Cm(k) = Cm_fun(geo,CP_vect,NPanels);
+% Once per all the cycle
+if k == 1
+fprintf('Cm_LE of the airfoil at %.3f° = %.3f\n\n',AoA(k),Cm(k));
+end
+
+
+
+% Thin airfoil theory
+
+% Camber line ------------------------------------------------
+% Once per all the cycle
+if k == 1
+[surface,camber] = camber_fun(geo,Chord,NPanels);
+
+% plot camber line and profile
+figure
+plot(x_initial,y_initial,'o-');
+hold on
+plot(camber.x,camber.y,'b');
+grid on 
+axis equal
+xlabel('Length of the airfoil');
+ylabel('Height of the airfoil');
+title('Camber line',naca_string);
+end
+
+
+
+% aerodynamics angles -----------------------------------------
+
+% alpha project
+alpha_project = alpha_project_fun(camber.x,camber.y,Chord);
+alpha_project_deg = rad2deg(alpha_project);
+%fprintf('alpha_project of the airfoil = %.3f°\n',alpha_project_deg);
+
+
+% alpha zero
+alpha_zero = alpha_zero_fun(camber.x,camber.y,Chord,alpha_project);
+alpha_zero_deg = rad2deg(alpha_zero);
+%fprintf('alpha_zero of the airfoil = %.3f°\n',alpha_zero_deg);
+
+
+% beta zero 
+beta_zero = beta_zero_fun(camber.x,camber.y,Chord);
+beta_zero_deg = rad2deg(beta_zero);
+%fprintf('beta_zero of the airfoil = %.3f°\n\n',beta_zero_deg);
+
+
+
+% aerodynamic coefficients -----------------------------------
+% Once per all the cycle
+if k == 1
+fprintf('Thin Airfoil Theory:----------------------------------------------\n');
+end
+
+% Cl of the thin airfoil
+Cl_thin_foil(k) = 2*pi*(deg2rad(AoA(k)) - alpha_zero);
+% Once per all the cycle
+if k == 1
+fprintf('Cl of the thin airfoil at %.3f° = %.3f\n',AoA(k),Cl_thin_foil(k));
+end
+
+% !!! NB thin airfoil theory considers positive angles as pitching down
+% (mathematical convention) instead xfoil considers positive angles 
+% as pitching up (aeronautical convention) so we have to change the sign
+% of the thin airfoil's theory !!!
+
+% Cm_LE of the thin airfoil
+Cm_thin_foil(k) = -(pi/2)*(deg2rad(AoA(k)) - beta_zero);
+% Once per all the cycle
+if k == 1
+fprintf('Cm_LE of the thin airfoil at %.3f° = %.3f\n\n',AoA(k),-Cm_thin_foil(k));
+end
+
+% Cm_AC of the thin airfoil
+%Cm_thin_foil = -(pi/2)*(alpha_zero - beta_zero);
+% % Once per all the cycle
+%if k == 1
+%fprintf('Cm_AC of the thin airfoil at %.3f° = %.3f\n\n',AoA(k),-Cm_thin_foil(k));
+%end
+
+
+
+% Printing all the angles
+% Once per all the cycle
+if k == 1
+fprintf('Aerodynamic angles:\n')
+fprintf('alpha_project of the airfoil = %.3f°\n',alpha_project_deg);
+fprintf('alpha_zero of the airfoil = %.3f°\n',alpha_zero_deg);
+fprintf('beta_zero of the airfoil = %.3f°\n\n\n',beta_zero_deg);
+end
+
+
+% error of the method ----------------------------------------
+% Once per all the cycle
+if k == 1
+fprintf('Error between Xfoil and Hess-Smith:-------------------------------\n');
+end
+
+% Cl error
+Cl_error = abs(xfoil_data.Cl(k) - Cl(k));
+Cl_percentage(k) = abs(xfoil_data.Cl(k) * Cl_error)/100;
+% Once per all the cycle
+if k == 1
+fprintf('Cl_error = %d --> %.8f%%\n',Cl_error,Cl_percentage(k));
+end
+
+% Cm error
+Cm_error = abs(-xfoil_data.Cm(k) - Cm(k));
+Cm_percentage(k) = abs(xfoil_data.Cm(k) * Cm_error)/100;
+% Once per all the cycle
+if k == 1
+fprintf('Cm_error = %d --> %.8f%%\n',Cm_error,Cm_percentage(k));
+end
+
+
+
+end
+
+
+% plot all Cl
+figure
+plot(AoA,Cl,'g','LineWidth',1.5,'DisplayName','Hess-Smith');
+hold on
+plot(AoA,xfoil_data.Cl,'r','LineWidth',1.5,'DisplayName','Xfoil');
+plot(AoA,Cl_thin_foil,'b','LineWidth',1.5,'DisplayName','Thin airfoil');
+grid on 
+xlabel('AoA [deg]','FontSize',22);
+ylabel('C_l','FontSize',22);
+title('C_l of the methods','FontSize',24);    %,naca_string);
+legend('Location','best','FontSize',20);
+set(gca,'FontSize',20);
+
+% plot all Cm
+figure
+plot(AoA,Cm,'g','LineWidth',1.5,'DisplayName','Hess-Smith');
+hold on
+plot(AoA,-xfoil_data.Cm,'r','LineWidth',1.5,'DisplayName','Xfoil');
+plot(AoA,-Cm_thin_foil,'b','LineWidth',1.5,'DisplayName','Thin airfoil');
+grid on 
+xlabel('AoA [deg]','FontSize',22);
+ylabel('C_m','FontSize',22);
+title('C_m of the methods','FontSize',24);    %,naca_string);
+legend('Location','best','FontSize',20);
+set(gca,'FontSize',20);
+
+
+
+%% Task 2: generate data with xfoil and imported profile's data from the site
+clear all
+close all
+clc
+
+
+
+% Choose which airfoil to compare
+NACA_0008 = "NACA_0008.dat";
+A18original = "A18original.dat";
+airfoildata = {NACA_0008,A18original};
+
+
+
+
+% Choose which graph to show
+% True = 1   ----  False = 0
+Flag_Cl_alpha = 1;
+Flag_Cd_alpha = 1;
+Flag_Cl_Cd = 1;
+Flag_Transition = 1;
+Flag_Separation = 1;
+
+
+
+% Choose conditions: initialising inputs
+NPanels_task2 = 200;
+Re_task2 = [5e5 1e6];
+alpha_task2 = -4 : 0.5 : 4;
+Ncrit_task2 = [10 12];
+
+
+
+% Cycle
+for w = 1 : numel(airfoildata)
+
+% Resetting the structs
+Polar = struct();
+cond_stall = struct();
+BL = struct();
+
+
+% createData_fun
+Polar.condition = createData(airfoildata{w},NPanels_task2,Re_task2,alpha_task2,Ncrit_task2);
+
+
+
+% Finding separation point from boundary layer
+for k = 1:numel(Polar.condition)
+
+    alpha = Polar.condition(k).data.alpha;
+    N = numel(alpha);
+
+    sep_flag = false(N,1);
+    x_sep    = NaN(N,1);
+    Hmax     = NaN(N,1);
+
+    for i = 1:N
+        BL = Polar.condition(k).data_bl.alpha(i);
+
+        Hmax(i) = max(BL.H);
+
+        % criterea for determinating the separation
+        idx = find(BL.H > 2.8 | BL.Cf < 1e-4, 1, 'first');
+
+        if ~isempty(idx)
+            sep_flag(i) = true;
+            x_sep(i)    = BL.x(idx);
+        end
+    end
+
+    % stall = first alpha with separation
+    idx_stall = find(sep_flag,1,'first');
+
+    cond_stall(k).alpha_stall = alpha(idx_stall);
+    cond_stall(k).idx_stall   = idx_stall;
+    cond_stall(k).sep_flag    = sep_flag;
+    cond_stall(k).x_sep       = x_sep;
+    cond_stall(k).Hmax        = Hmax;
+    cond_stall(k).Re          = Polar.condition(k).Re;
+    cond_stall(k).Ncrt        = Polar.condition(k).Ncrit;
+end
+
+
+
+% Cl vs alpha
+if Flag_Cl_alpha == 1
+figure
+hold on
+grid on
+
+for k = 1:numel(Polar.condition)
+    Re    = Polar.condition(k).Re;   %
+    Ncrit = Polar.condition(k).Ncrit; %
+    a  = Polar.condition(k).data.alpha;
+    Cl = Polar.condition(k).data.Cl;
+
+    plot(a,Cl,'-o','HandleVisibility','off') %
+    plot(a,Cl,'LineWidth',2,'DisplayName', sprintf('Re=%.0e, N_{crit}=%d', Re, Ncrit)) % 2,
+
+    iS = cond_stall(k).idx_stall;
+    plot(a(iS),Cl(iS),'rp', ...
+        'MarkerSize',12,'MarkerFaceColor','r','HandleVisibility','off')
+end
+
+plot(nan, nan, 'rp','MarkerSize', 12,'MarkerFaceColor','r','DisplayName','stall') %
+
+xlabel('\alpha [deg]')
+ylabel('C_l')
+title(airfoildata{w},'C_l vs \alpha')
+legend('Location','best') %
+end
+
+
+
+% Cd vs alpha
+if Flag_Cd_alpha == 1
+figure
+hold on
+grid on
+
+for k = 1:numel(Polar.condition)
+    Re    = Polar.condition(k).Re;   %
+    Ncrit = Polar.condition(k).Ncrit; %
+    a  = Polar.condition(k).data.alpha;
+    Cd = Polar.condition(k).data.Cd;
+
+    plot(a,Cd,'-o','HandleVisibility','off') %
+    plot(a,Cd,'LineWidth',2,'DisplayName', sprintf('Re=%.0e, N_{crit}=%d', Re, Ncrit)) % 2,
+
+    iS = cond_stall(k).idx_stall;
+    plot(a(iS),Cd(iS),'rp', ...
+        'MarkerSize',12,'MarkerFaceColor','r','HandleVisibility','off')
+end
+
+plot(nan, nan, 'rp','MarkerSize', 12,'MarkerFaceColor','r','DisplayName','stall') %
+
+xlabel('\alpha [deg]')
+ylabel('C_d')
+title(airfoildata{w},'C_d vs \alpha')
+legend('Location','best') %
+end
+
+
+
+% Polar: Cl vs Cd
+if Flag_Cl_Cd == 1
+figure
+hold on
+grid on
+
+for k = 1:numel(Polar.condition)
+    Re    = Polar.condition(k).Re;   %
+    Ncrit = Polar.condition(k).Ncrit; %
+    Cl = Polar.condition(k).data.Cl;
+    Cd = Polar.condition(k).data.Cd;
+
+
+    plot(Cd,Cl,'LineWidth',2,'DisplayName', sprintf('Re=%.0e, N_{crit}=%d', Re, Ncrit)) % 2,
+
+    iS = cond_stall(k).idx_stall;
+    plot(Cd(iS),Cl(iS),'rp', ...
+        'MarkerSize',12,'MarkerFaceColor','r','HandleVisibility','off')
+
+    % max Cl / Cd
+    [~,idx] = max(Cl ./ Cd);
+
+    plot(Cd,Cl,'-o','HandleVisibility','off')
+    plot(Cd(idx),Cl(idx),'ko','MarkerFaceColor','k','HandleVisibility','off')
+end
+
+plot(nan,nan,'ko','MarkerFaceColor','k','DisplayName','max Cl / Cd')  %
+plot(nan, nan, 'rp','MarkerSize', 12,'MarkerFaceColor','r','DisplayName','stall') %
+
+xlabel('C_d')
+ylabel('C_l')
+title(airfoildata{w},'Aerodynamic Polar')
+legend('Location','best') %
+end
+
+
+
+if Flag_Transition == 1
+% Transition points from laminar to turbolent
+figure
+hold on
+grid on
+
+colors = lines(numel(Polar.condition));
+
+for k = 1:numel(Polar.condition)
+    Re    = Polar.condition(k).Re;   %
+    Ncrit = Polar.condition(k).Ncrit; %
+    a = Polar.condition(k).data.alpha;
+
+
+    plot(a,Polar.condition(k).data.Top_Xtr, '-','Color', colors(k,:), ...
+        'LineWidth',2,'DisplayName', sprintf('Top Re=%.0e, N_{crit}=%d', Re, Ncrit)) % 2,
+    plot(a,Polar.condition(k).data.Bot_Xtr,'--','Color',colors(k,:), ...
+        'LineWidth',2,'DisplayName', sprintf('Bot Re=%.0e, N_{crit}=%d', Re, Ncrit)) % 2,
+
+    % stallo
+    xline(cond_stall(k).alpha_stall,'--r','HandleVisibility','off')
+end
+
+plot(nan, nan, '--r','DisplayName','stall') %
+
+
+xlabel('\alpha [deg]')
+ylabel('x_{tr}/c')
+ylim([0 1])
+title(airfoildata{w},'Points of transition from laminar -> turbolent')
+legend('Location','best') %
+end
+
+
+
+if Flag_Separation == 1
+% Separation alongside chord 
+for k = 1 : numel(cond_stall)
+    iS = cond_stall(k).idx_stall;
+    BL = Polar.condition(k).data_bl.alpha(iS);
+
+    x  = BL.x;
+    H  = BL.H;
+    
+    % leading edge
+    [~, iLE] = min(x);
+    
+    idx_top    = false(size(x));
+    idx_bottom = false(size(x));
+    idx_wake   = x > 1;
+    
+    idx_top(1:iLE)        = true;
+    idx_bottom(iLE+1:end) = true;
+    
+    idx_top(idx_wake)    = false;
+    idx_bottom(idx_wake) = false;
+
+
+    % plot
+    H_sep = 2.8;
+    
+    figure
+    hold on
+    grid on
+    
+    % --- surfaces ---
+    plot(x(idx_top),    H(idx_top),    'b', 'LineWidth', 1.5)
+    plot(x(idx_bottom), H(idx_bottom), 'g', 'LineWidth', 1.5)
+    plot(x(idx_wake),   H(idx_wake),   '--', 'Color',[0.5 0.5 0.5])
+    
+    % --- separation trashold ---
+    yline(H_sep,'r--','H_{separation}')
+    
+    xlabel('x / c')
+    ylabel('H')
+    title(airfoildata{w},sprintf('Boundary Layer at stall point: Re = %.0e, N_{crit} = %d, \\alpha = %.1f°', ...
+          cond_stall(k).Re,cond_stall(k).Ncrt,cond_stall(k).alpha_stall))
+    
+    legend('Top','Bottom','Wake','Location','best')
+
+
+    % % Highliting separation points
+    % idx_sep = H > H_sep & ~idx_wake;
+    % 
+    % plot(x(idx_sep), H(idx_sep), 'ro', ...
+    %      'MarkerFaceColor','r', 'MarkerSize',5)
+
+end
+end
+
+
+
+end

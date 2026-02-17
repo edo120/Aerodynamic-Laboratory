@@ -1,0 +1,22 @@
+function data = readPolarFile(filename)
+% This function reads the data that xfoil has computed
+
+% fileID = fopen(filename,'r');
+% if fileID < 0
+%     error('Polar file not found');
+% end
+% 
+% % skip header
+% for i = 1:12
+%     fgetl(fileID);
+% end
+% 
+% data = fscanf(fileID,'%f %f %f %f %f',[5 Inf])';
+% fclose(fileID);
+
+% Verify open file
+if 
+
+
+
+end
