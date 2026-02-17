@@ -1,4 +1,5 @@
 # Aerodynamic-Lab
+ATTENTION: This code is written for Linux Operative Systems
 
 Aerodynamic Laboratory:
 
